@@ -108,6 +108,28 @@ class UMaterialInterface;
          bool bInvertMask = false;
 
     // ============================================================
+    // Padding
+    // ============================================================
+
+    /**
+     * Include overscan padding faces in the output mesh. When enabled, the mesh
+     * is not cropped back to the tile bounds and the additional faces created
+     * by the overscan cells are kept. These padded faces are assigned to
+     * a separate polygroup so they can be distinguished downstream.
+     */
+    UPROPERTY(EditAnywhere, BlueprintReadWrite, Category="Mesh",
+              meta=(PCG_Overridable))
+    bool bIncludePadding = false;
+
+    /**
+     * Polygroup ID assigned to the padded faces when bIncludePadding is true. This
+     * value should be greater than zero to avoid clashing with the default group (0).
+     */
+    UPROPERTY(EditAnywhere, BlueprintReadWrite, Category="Mesh",
+              meta=(PCG_Overridable, ClampMin="1", EditCondition="bIncludePadding"))
+    int32 PaddingPolygroupID = 1;
+
+    // ============================================================
     // Material
     // ============================================================
 

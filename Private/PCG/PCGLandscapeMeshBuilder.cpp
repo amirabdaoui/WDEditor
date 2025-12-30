@@ -760,7 +760,39 @@ bool BuildMeshFromSamples(
                 //    advanced subdivision should be performed in a separate node.
 
                 // 7) Crop back to partition bounds (XY) -- still in world space here
-                Builder_Internal::CropMeshToBoundsXY(OutMesh, CropBoundsXY);
+                // If padding is disabled, remove triangles outside the crop bounds. Otherwise,
+                // keep the overscan/padding region and assign those triangles to a separate
+                // polygroup using the user-specified ID.
+                if (!Settings.bIncludePadding)
+                {
+                        Builder_Internal::CropMeshToBoundsXY(OutMesh, CropBoundsXY);
+                }
+                else
+                {
+                        // Assign padding triangles to the PaddingPolygroupID when specified.
+                        if (Settings.PaddingPolygroupID >= 0)
+                        {
+                                OutMesh.EnableTriangleGroups();
+                                for (int32 Tid : OutMesh.TriangleIndicesItr())
+                                {
+                                        if (!OutMesh.IsTriangle(Tid))
+                                        {
+                                                continue;
+                                        }
+                                        const FIndex3i TriV = OutMesh.GetTriangle(Tid);
+                                        const FVector3d A = OutMesh.GetVertex(TriV.A);
+                                        const FVector3d B = OutMesh.GetVertex(TriV.B);
+                                        const FVector3d C = OutMesh.GetVertex(TriV.C);
+                                        const FVector2D Centroid(
+                                                (float)((A.X + B.X + C.X) / 3.0),
+                                                (float)((A.Y + B.Y + C.Y) / 3.0));
+                                        if (!CropBoundsXY.IsInside(Centroid))
+                                        {
+                                                OutMesh.SetTriangleGroup(Tid, Settings.PaddingPolygroupID);
+                                        }
+                                }
+                        }
+                }
                 Stats.NumTrianglesAfterCrop = OutMesh.TriangleCount();
 
                 // 8) Optional cleanup

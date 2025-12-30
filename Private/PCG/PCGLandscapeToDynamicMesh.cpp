@@ -267,6 +267,10 @@
         // Do not alter bConstrainCropBoundary based on subdivision. Always constrain the crop
         // boundary so that the mesh matches the landscape bounds.
         Build.bConstrainCropBoundary = true;
+
+        // Padding: include overscan padding faces and assign them to a separate polygroup
+        Build.bIncludePadding = Settings->bIncludePadding;
+        Build.PaddingPolygroupID = Settings->PaddingPolygroupID;
  
          UE::Geometry::FDynamicMesh3 BuiltMesh;
          WDEditor::PCG::FPCGLandscapeMeshConstraints Constraints;
