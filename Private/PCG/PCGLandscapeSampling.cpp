@@ -3,7 +3,13 @@
  /* PCG */
  #include "PCGCommon.h"
  #include "Data/PCGLandscapeData.h"
- #include "Data/PCGPointData.h"
+#include "Data/PCGPointData.h"
+
+// Additional includes for metadata access when sampling layer weights
+#include "Metadata/PCGMetadata.h"
+#include "Metadata/PCGMetadataCommon.h"
+// Include spatial data for initializing metadata from a source
+#include "Data/PCGSpatialData.h"
  
  namespace WDEditor::PCG
  {
@@ -48,12 +54,35 @@
                  ProjectionParams.bProjectRotations = true;
                  ProjectionParams.bProjectScales    = false;
  
-                 for (int32 Y = 0; Y < GridY; ++Y)
-                 {
-                         for (int32 X = 0; X < GridX; ++X)
-                         {
-                                 const int32 Index = X + Y * GridX;
-                                 FPCGLandscapeGridSample& Sample = OutSamples[Index];
+    // If the caller requested a landscape layer mask, allocate a single metadata container
+    // up front and initialize it from the landscape. This avoids allocating new UObjects
+    // during GC and allows reuse of the same metadata throughout the grid sampling. If
+    // MaskLayerName is NAME_None, we will leave MetadataPtr null and fall back to density.
+    UPCGMetadata* MetadataPtr = nullptr;
+    const bool bUseLayerMask = !Settings.MaskLayerName.IsNone();
+    if (bUseLayerMask)
+    {
+        // Allocate a new metadata container. Use NewObject without specifying an Outer to
+        // create a transient UObject. This allocation happens once, outside the sampling
+        // loops, so it is safe with respect to GC.
+        MetadataPtr = NewObject<UPCGMetadata>();
+
+        // Initialize metadata attributes for this landscape. InitializeTargetMetadata will
+        // populate the metadata with all layer names defined on the landscape so that
+        // ProjectPoint can fill weight values. Use FPCGInitializeFromDataParams with
+        // the landscape data as the source, and ensure metadata and attributes are inherited.
+        FPCGInitializeFromDataParams InitParams(LandscapeData);
+        InitParams.bInheritMetadata = true;
+        InitParams.bInheritAttributes = true;
+        LandscapeData->InitializeTargetMetadata(InitParams, MetadataPtr);
+    }
+
+    for (int32 Y = 0; Y < GridY; ++Y)
+    {
+        for (int32 X = 0; X < GridX; ++X)
+        {
+            const int32 Index = X + Y * GridX;
+            FPCGLandscapeGridSample& Sample = OutSamples[Index];
  
                                  const FVector WorldPos =
                                          MakeWorldPos2D(
@@ -67,14 +96,18 @@
                                          FQuat::Identity,
                                          FVector(WorldPos.X, WorldPos.Y, 0.0));
  
-                                 FPCGPoint Point;
-                                 const bool bHit =
-                                         LandscapeData->ProjectPoint(
-                                                 QueryTransform,
-                                                 QueryBounds,
-                                                 ProjectionParams,
-                                                 Point,
-                                                 /*OutMetadata=*/nullptr);
+            FPCGPoint Point;
+            // Decide whether to request metadata based on MaskLayerName. If we need a layer mask,
+            // pass the pre-allocated MetadataPtr to collect layer weights. Otherwise, pass
+            // nullptr to avoid unnecessary metadata writes.
+            UPCGMetadata* OutMetadata = bUseLayerMask ? MetadataPtr : nullptr;
+            const bool bHit =
+                LandscapeData->ProjectPoint(
+                    QueryTransform,
+                    QueryBounds,
+                    ProjectionParams,
+                    Point,
+                    /*OutMetadata=*/OutMetadata);
  
                                  if (!bHit)
                                  {
@@ -101,25 +134,40 @@
                                          Sample.Normal = FVector3d::UpVector;
                                  }
  
-                                // --------------------------------------------------------------
-                                // Mask sampling: use the point's density (visibility) as the mask.
-                                // UPCGLandscapeData does not expose an API to directly sample
-                                // landscape layer weights at an arbitrary location, so we cannot
-                                // query Settings.MaskLayerName here.  Instead, always use the
-                                // projected point's density as the mask.  If a layer name is provided,
-                                // it is ignored but the density sampling remains consistent with
-                                // the default PCG Landscape node behaviour.
-                                // --------------------------------------------------------------
-                                float MaskValue = FMath::Clamp(Point.Density, 0.0f, 1.0f);
- 
-                                // Apply optional inversion and store the mask
-                                if (Settings.bInvertMask)
-                                {
-                                        MaskValue = 1.0f - MaskValue;
-                                }
+            // --------------------------------------------------------------
+            // Mask sampling: if MaskLayerName is specified and metadata is available,
+            // read the layer weight from the metadata. Otherwise, use density.
+            // --------------------------------------------------------------
+            float MaskValue = 0.0f;
+            if (bUseLayerMask && MetadataPtr)
+            {
+                // Read the layer attribute from the initialized metadata using
+                // the projected point's MetadataEntry. Note: Attribute can be null
+                // if the layer does not exist or is not enabled on this landscape.
+                const auto* Attribute = MetadataPtr->GetConstTypedAttribute<float>(
+                    FPCGAttributeIdentifier(Settings.MaskLayerName));
+                if (Attribute && Point.MetadataEntry != PCGInvalidEntryKey)
+                {
+                    MaskValue = Attribute->GetValueFromItemKey(Point.MetadataEntry);
+                }
+                else
+                {
+                    // Fallback to density if attribute is missing or point has no metadata entry
+                    MaskValue = FMath::Clamp(Point.Density, 0.0f, 1.0f);
+                }
+            }
+            else
+            {
+                // No mask layer specified or metadata disabled; use density
+                MaskValue = FMath::Clamp(Point.Density, 0.0f, 1.0f);
+            }
 
-                                // MaskValue is already clamped above; no need to clamp again
-                                Sample.Mask = MaskValue;
+            // Apply optional inversion and clamp
+            if (Settings.bInvertMask)
+            {
+                MaskValue = 1.0f - MaskValue;
+            }
+            Sample.Mask = FMath::Clamp(MaskValue, 0.0f, 1.0f);
                          }
                  }
  
