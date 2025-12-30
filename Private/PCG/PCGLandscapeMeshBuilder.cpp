@@ -3,6 +3,7 @@
 #include "PCG/PCGLandscapeMeshBuilder.h"
 
 /* GeometryCore */
+#include "DynamicMesh/DynamicMesh3.h" // includes FEdgeSplitInfo and EMeshResult definitions
 #include "DynamicMesh/MeshNormals.h"
 #include "IndexTypes.h"
 
@@ -17,360 +18,360 @@ namespace WDEditor::PCG
 {
 namespace Builder_Internal
 {
-	static FORCEINLINE int32 SampleIndex(int32 X, int32 Y, int32 GridX)
-	{
-		return X + Y * GridX;
-	}
+        static FORCEINLINE int32 SampleIndex(int32 X, int32 Y, int32 GridX)
+        {
+                return X + Y * GridX;
+        }
 
-	static FORCEINLINE bool IsSolid(float Mask, float Threshold)
-	{
-		return Mask >= Threshold;
-	}
+        static FORCEINLINE bool IsSolid(float Mask, float Threshold)
+        {
+                return Mask >= Threshold;
+        }
 
-	static FORCEINLINE FVector3d MakePos(const FVector2D& GridMinXY, double CellSize, int32 X, int32 Y, double Z)
-	{
-		return FVector3d(
-			(double)GridMinXY.X + (double)X * CellSize,
-			(double)GridMinXY.Y + (double)Y * CellSize,
-			Z);
-	}
+        static FORCEINLINE FVector3d MakePos(const FVector2D& GridMinXY, double CellSize, int32 X, int32 Y, double Z)
+        {
+                return FVector3d(
+                        (double)GridMinXY.X + (double)X * CellSize,
+                        (double)GridMinXY.Y + (double)Y * CellSize,
+                        Z);
+        }
 
-	static FORCEINLINE FVector3d Lerp3(const FVector3d& A, const FVector3d& B, double T)
-	{
-		return A + (B - A) * T;
-	}
+        static FORCEINLINE FVector3d Lerp3(const FVector3d& A, const FVector3d& B, double T)
+        {
+                return A + (B - A) * T;
+        }
 
-	static FVector3d LerpNormalSafe(const FVector3d& A, const FVector3d& B, double T)
-	{
-		FVector3d N = Lerp3(A, B, T);
-		if (!N.Normalize())
-		{
-			N = FVector3d::UpVector;
-		}
-		return N;
-	}
+        static FVector3d LerpNormalSafe(const FVector3d& A, const FVector3d& B, double T)
+        {
+                FVector3d N = Lerp3(A, B, T);
+                if (!N.Normalize())
+                {
+                        N = FVector3d::UpVector;
+                }
+                return N;
+        }
 
-	/** Undirected key for caching edge-intersection vertices on grid edges. */
-	static uint64 MakeGridEdgeKey(int32 X, int32 Y, int32 Dir /*0=H,1=V*/)
-	{
-		// pack into 64: (Dir<<62) | (Y<<31) | X
-		const uint64 UX = (uint32)X;
-		const uint64 UY = (uint32)Y;
-		return (uint64(Dir) << 62) | (UY << 31) | UX;
-	}
+        /** Undirected key for caching edge-intersection vertices on grid edges. */
+        static uint64 MakeGridEdgeKey(int32 X, int32 Y, int32 Dir /*0=H,1=V*/)
+        {
+                // pack into 64: (Dir<<62) | (Y<<31) | X
+                const uint64 UX = (uint32)X;
+                const uint64 UY = (uint32)Y;
+                return (uint64(Dir) << 62) | (UY << 31) | UX;
+        }
 
-	static int32 GetOrCreateEdgeVertex(
-		FDynamicMesh3& Mesh,
-		TMap<uint64, int32>& EdgeVertexCache,
-		TSet<int32>& OutBoundaryVerts,
-		const FPCGLandscapeMeshGridDesc& Grid,
-		const FPCGLandscapeMeshBuilderSettings& Settings,
-		int32 X, int32 Y, int32 Dir)
-	{
-		const uint64 Key = MakeGridEdgeKey(X, Y, Dir);
-		if (const int32* Found = EdgeVertexCache.Find(Key))
-		{
-			return *Found;
-		}
+        static int32 GetOrCreateEdgeVertex(
+                FDynamicMesh3& Mesh,
+                TMap<uint64, int32>& EdgeVertexCache,
+                TSet<int32>& OutBoundaryVerts,
+                const FPCGLandscapeMeshGridDesc& Grid,
+                const FPCGLandscapeMeshBuilderSettings& Settings,
+                int32 X, int32 Y, int32 Dir)
+        {
+                const uint64 Key = MakeGridEdgeKey(X, Y, Dir);
+                if (const int32* Found = EdgeVertexCache.Find(Key))
+                {
+                        return *Found;
+                }
 
-		const int32 GridX = Grid.GridX;
-		const int32 GridY = Grid.GridY;
-		const TArray<FPCGLandscapeGridSample>& Samples = *Grid.Samples;
+                const int32 GridX = Grid.GridX;
+                const int32 GridY = Grid.GridY;
+                const TArray<FPCGLandscapeGridSample>& Samples = *Grid.Samples;
 
-		// endpoints
-		int32 X0 = X, Y0 = Y;
-		int32 X1 = X, Y1 = Y;
-		if (Dir == 0) { X1 = X + 1; }
-		else          { Y1 = Y + 1; }
+                // endpoints
+                int32 X0 = X, Y0 = Y;
+                int32 X1 = X, Y1 = Y;
+                if (Dir == 0) { X1 = X + 1; }
+                else          { Y1 = Y + 1; }
 
-		check(X0 >= 0 && X0 < GridX && Y0 >= 0 && Y0 < GridY);
-		check(X1 >= 0 && X1 < GridX && Y1 >= 0 && Y1 < GridY);
+                check(X0 >= 0 && X0 < GridX && Y0 >= 0 && Y0 < GridY);
+                check(X1 >= 0 && X1 < GridX && Y1 >= 0 && Y1 < GridY);
 
-		const FPCGLandscapeGridSample& S0 = Samples[SampleIndex(X0, Y0, GridX)];
-		const FPCGLandscapeGridSample& S1 = Samples[SampleIndex(X1, Y1, GridX)];
+                const FPCGLandscapeGridSample& S0 = Samples[SampleIndex(X0, Y0, GridX)];
+                const FPCGLandscapeGridSample& S1 = Samples[SampleIndex(X1, Y1, GridX)];
 
-		const double M0 = (double)S0.Mask;
-		const double M1 = (double)S1.Mask;
-		const double Den = (M1 - M0);
+                const double M0 = (double)S0.Mask;
+                const double M1 = (double)S1.Mask;
+                const double Den = (M1 - M0);
 
-		// Threshold-based interpolation. If Den ~ 0, fall back to midpoint.
-		double T = 0.5;
-		if (FMath::Abs(Den) > 1e-8)
-		{
-			T = ((double)Settings.MaskThreshold - M0) / Den;
-			T = FMath::Clamp(T, 0.0, 1.0);
-		}
+                // Threshold-based interpolation. If Den ~ 0, fall back to midpoint.
+                double T = 0.5;
+                if (FMath::Abs(Den) > 1e-8)
+                {
+                        T = ((double)Settings.MaskThreshold - M0) / Den;
+                        T = FMath::Clamp(T, 0.0, 1.0);
+                }
 
-		const FVector3d P0 = MakePos(Grid.GridMinXY, Settings.CellSize, X0, Y0, S0.Height);
-		const FVector3d P1 = MakePos(Grid.GridMinXY, Settings.CellSize, X1, Y1, S1.Height);
+                const FVector3d P0 = MakePos(Grid.GridMinXY, Settings.CellSize, X0, Y0, S0.Height);
+                const FVector3d P1 = MakePos(Grid.GridMinXY, Settings.CellSize, X1, Y1, S1.Height);
 
-		const FVector3d Pos = Lerp3(P0, P1, T);
-		const FVector3d Nor = LerpNormalSafe(S0.Normal, S1.Normal, T);
+                const FVector3d Pos = Lerp3(P0, P1, T);
+                const FVector3d Nor = LerpNormalSafe(S0.Normal, S1.Normal, T);
 
-		const int32 Vid = Mesh.AppendVertex(Pos);
+                const int32 Vid = Mesh.AppendVertex(Pos);
 
-		// Mark as mask-boundary vertex (hard constraint for subdivision)
-		OutBoundaryVerts.Add(Vid);
+                // Mark as mask-boundary vertex (hard constraint for subdivision)
+                OutBoundaryVerts.Add(Vid);
 
-		EdgeVertexCache.Add(Key, Vid);
-		return Vid;
-	}
+                EdgeVertexCache.Add(Key, Vid);
+                return Vid;
+        }
 
-	static void AddTriDeterministic(FDynamicMesh3& Mesh, int32 A, int32 B, int32 C)
-	{
-		// Flip winding so front faces point up (fix backface-only rendering)
-		Mesh.AppendTriangle(A, C, B);
-	}
+        static void AddTriDeterministic(FDynamicMesh3& Mesh, int32 A, int32 B, int32 C)
+        {
+                // Flip winding so front faces point up (fix backface-only rendering)
+                Mesh.AppendTriangle(A, C, B);
+        }
 
-	static void AccumulateConstraintEdgesFromVertices(
-		FDynamicMesh3& Mesh,
-		FPCGLandscapeMeshConstraints& Constraints)
-	{
-		for (int32 Vid : Constraints.ConstrainedVertices)
-		{
-			if (!Mesh.IsVertex(Vid))
-			{
-				continue;
-			}
+        static void AccumulateConstraintEdgesFromVertices(
+                FDynamicMesh3& Mesh,
+                FPCGLandscapeMeshConstraints& Constraints)
+        {
+                for (int32 Vid : Constraints.ConstrainedVertices)
+                {
+                        if (!Mesh.IsVertex(Vid))
+                        {
+                                continue;
+                        }
 
-			Mesh.EnumerateVertexEdges(Vid, [&](int32 Eid)
-			{
-				if (Mesh.IsEdge(Eid))
-				{
-					Constraints.ConstrainedEdges.Add(Eid);
-				}
-			});
-		}
-	}
+                        Mesh.EnumerateVertexEdges(Vid, [&](int32 Eid)
+                        {
+                                if (Mesh.IsEdge(Eid))
+                                {
+                                        Constraints.ConstrainedEdges.Add(Eid);
+                                }
+                        });
+                }
+        }
 
-	static void AddCropBoundaryConstraints(
-		const FBox2D& CropBoundsXY,
-		const FPCGLandscapeMeshBuilderSettings& Settings,
-		FDynamicMesh3& Mesh,
-		FPCGLandscapeMeshConstraints& Constraints)
-	{
-		const double Eps = FMath::Max(0.0, Settings.CropBoundaryEpsilon);
+        static void AddCropBoundaryConstraints(
+                const FBox2D& CropBoundsXY,
+                const FPCGLandscapeMeshBuilderSettings& Settings,
+                FDynamicMesh3& Mesh,
+                FPCGLandscapeMeshConstraints& Constraints)
+        {
+                const double Eps = FMath::Max(0.0, Settings.CropBoundaryEpsilon);
 
-		const double MinX = (double)CropBoundsXY.Min.X;
-		const double MaxX = (double)CropBoundsXY.Max.X;
-		const double MinY = (double)CropBoundsXY.Min.Y;
-		const double MaxY = (double)CropBoundsXY.Max.Y;
+                const double MinX = (double)CropBoundsXY.Min.X;
+                const double MaxX = (double)CropBoundsXY.Max.X;
+                const double MinY = (double)CropBoundsXY.Min.Y;
+                const double MaxY = (double)CropBoundsXY.Max.Y;
 
-		for (int32 Vid : Mesh.VertexIndicesItr())
-		{
-			if (!Mesh.IsVertex(Vid))
-			{
-				continue;
-			}
+                for (int32 Vid : Mesh.VertexIndicesItr())
+                {
+                        if (!Mesh.IsVertex(Vid))
+                        {
+                                continue;
+                        }
 
-			const FVector3d P = Mesh.GetVertex(Vid);
-			const bool bOnX = (FMath::Abs(P.X - MinX) <= Eps) || (FMath::Abs(P.X - MaxX) <= Eps);
-			const bool bOnY = (FMath::Abs(P.Y - MinY) <= Eps) || (FMath::Abs(P.Y - MaxY) <= Eps);
+                        const FVector3d P = Mesh.GetVertex(Vid);
+                        const bool bOnX = (FMath::Abs(P.X - MinX) <= Eps) || (FMath::Abs(P.X - MaxX) <= Eps);
+                        const bool bOnY = (FMath::Abs(P.Y - MinY) <= Eps) || (FMath::Abs(P.Y - MaxY) <= Eps);
 
-			if (bOnX || bOnY)
-			{
-				Constraints.ConstrainedVertices.Add(Vid);
-			}
-		}
-	}
+                        if (bOnX || bOnY)
+                        {
+                                Constraints.ConstrainedVertices.Add(Vid);
+                        }
+                }
+        }
 
-	static bool TriangleCentroidInsideXY(
-		const FDynamicMesh3& Mesh,
-		int32 Tid,
-		const FBox2D& CropBoundsXY)
-	{
-		const FIndex3i T = Mesh.GetTriangle(Tid);
-		const FVector3d A = Mesh.GetVertex(T.A);
-		const FVector3d B = Mesh.GetVertex(T.B);
-		const FVector3d C = Mesh.GetVertex(T.C);
+        static bool TriangleCentroidInsideXY(
+                const FDynamicMesh3& Mesh,
+                int32 Tid,
+                const FBox2D& CropBoundsXY)
+        {
+                const FIndex3i T = Mesh.GetTriangle(Tid);
+                const FVector3d A = Mesh.GetVertex(T.A);
+                const FVector3d B = Mesh.GetVertex(T.B);
+                const FVector3d C = Mesh.GetVertex(T.C);
 
-		const FVector2D Centroid(
-			(float)((A.X + B.X + C.X) / 3.0),
-			(float)((A.Y + B.Y + C.Y) / 3.0));
+                const FVector2D Centroid(
+                        (float)((A.X + B.X + C.X) / 3.0),
+                        (float)((A.Y + B.Y + C.Y) / 3.0));
 
-		return CropBoundsXY.IsInside(Centroid);
-	}
+                return CropBoundsXY.IsInside(Centroid);
+        }
 
-	static void CropMeshToBoundsXY(FDynamicMesh3& Mesh, const FBox2D& CropBoundsXY)
-	{
-		TArray<int32> ToRemove;
-		ToRemove.Reserve(Mesh.TriangleCount());
+        static void CropMeshToBoundsXY(FDynamicMesh3& Mesh, const FBox2D& CropBoundsXY)
+        {
+                TArray<int32> ToRemove;
+                ToRemove.Reserve(Mesh.TriangleCount());
 
-		for (int32 Tid : Mesh.TriangleIndicesItr())
-		{
-			if (!Mesh.IsTriangle(Tid))
-			{
-				continue;
-			}
+                for (int32 Tid : Mesh.TriangleIndicesItr())
+                {
+                        if (!Mesh.IsTriangle(Tid))
+                        {
+                                continue;
+                        }
 
-			if (!TriangleCentroidInsideXY(Mesh, Tid, CropBoundsXY))
-			{
-				ToRemove.Add(Tid);
-			}
-		}
+                        if (!TriangleCentroidInsideXY(Mesh, Tid, CropBoundsXY))
+                        {
+                                ToRemove.Add(Tid);
+                        }
+                }
 
-		for (int32 Tid : ToRemove)
-		{
-			if (Mesh.IsTriangle(Tid))
-			{
-				Mesh.RemoveTriangle(Tid, false);
-			}
-		}
-	}
+                for (int32 Tid : ToRemove)
+                {
+                        if (Mesh.IsTriangle(Tid))
+                        {
+                                Mesh.RemoveTriangle(Tid, false);
+                        }
+                }
+        }
 
-	static void RemoveIsolatedVertices(FDynamicMesh3& Mesh)
-	{
-		TArray<int32> VertsToRemove;
-		for (int32 Vid : Mesh.VertexIndicesItr())
-		{
-			if (!Mesh.IsVertex(Vid))
-			{
-				continue;
-			}
+        static void RemoveIsolatedVertices(FDynamicMesh3& Mesh)
+        {
+                TArray<int32> VertsToRemove;
+                for (int32 Vid : Mesh.VertexIndicesItr())
+                {
+                        if (!Mesh.IsVertex(Vid))
+                        {
+                                continue;
+                        }
 
-			if (Mesh.GetVtxTriangleCount(Vid) == 0)
-			{
-				VertsToRemove.Add(Vid);
-			}
-		}
+                        if (Mesh.GetVtxTriangleCount(Vid) == 0)
+                        {
+                                VertsToRemove.Add(Vid);
+                        }
+                }
 
-		for (int32 Vid : VertsToRemove)
-		{
-			if (Mesh.IsVertex(Vid) && Mesh.GetVtxTriangleCount(Vid) == 0)
-			{
-				Mesh.RemoveVertex(Vid, false);
-			}
-		}
-	}
+                for (int32 Vid : VertsToRemove)
+                {
+                        if (Mesh.IsVertex(Vid) && Mesh.GetVtxTriangleCount(Vid) == 0)
+                        {
+                                Mesh.RemoveVertex(Vid, false);
+                        }
+                }
+        }
 
-	static void BuildCellPolygon_MarchingSquares(
-		FDynamicMesh3& Mesh,
-		TMap<uint64, int32>& EdgeVertexCache,
-		TSet<int32>& BoundaryVerts,
-		const FPCGLandscapeMeshGridDesc& Grid,
-		const FPCGLandscapeMeshBuilderSettings& Settings,
-		int32 CellX, int32 CellY,
-		int32 V00, int32 V10, int32 V11, int32 V01,
-		bool bS00, bool bS10, bool bS11, bool bS01,
-		TArray<int32>& OutPoly)
-	{
-		OutPoly.Reset();
+        static void BuildCellPolygon_MarchingSquares(
+                FDynamicMesh3& Mesh,
+                TMap<uint64, int32>& EdgeVertexCache,
+                TSet<int32>& BoundaryVerts,
+                const FPCGLandscapeMeshGridDesc& Grid,
+                const FPCGLandscapeMeshBuilderSettings& Settings,
+                int32 CellX, int32 CellY,
+                int32 V00, int32 V10, int32 V11, int32 V01,
+                bool bS00, bool bS10, bool bS11, bool bS01,
+                TArray<int32>& OutPoly)
+        {
+                OutPoly.Reset();
 
-		const int32 Case =
-			(bS00 ? 1 : 0) |
-			(bS10 ? 2 : 0) |
-			(bS11 ? 4 : 0) |
-			(bS01 ? 8 : 0);
+                const int32 Case =
+                        (bS00 ? 1 : 0) |
+                        (bS10 ? 2 : 0) |
+                        (bS11 ? 4 : 0) |
+                        (bS01 ? 8 : 0);
 
-		check(Case != 0 && Case != 15);
+                check(Case != 0 && Case != 15);
 
-		const bool bE0 = (bS00 != bS10);
-		const bool bE1 = (bS10 != bS11);
-		const bool bE2 = (bS01 != bS11);
-		const bool bE3 = (bS00 != bS01);
+                const bool bE0 = (bS00 != bS10);
+                const bool bE1 = (bS10 != bS11);
+                const bool bE2 = (bS01 != bS11);
+                const bool bE3 = (bS00 != bS01);
 
-		const int32 E0 = bE0 ? GetOrCreateEdgeVertex(Mesh, EdgeVertexCache, BoundaryVerts, Grid, Settings, CellX,     CellY,     0) : -1;
-		const int32 E1 = bE1 ? GetOrCreateEdgeVertex(Mesh, EdgeVertexCache, BoundaryVerts, Grid, Settings, CellX + 1, CellY,     1) : -1;
-		const int32 E2 = bE2 ? GetOrCreateEdgeVertex(Mesh, EdgeVertexCache, BoundaryVerts, Grid, Settings, CellX,     CellY + 1, 0) : -1;
-		const int32 E3 = bE3 ? GetOrCreateEdgeVertex(Mesh, EdgeVertexCache, BoundaryVerts, Grid, Settings, CellX,     CellY,     1) : -1;
+                const int32 E0 = bE0 ? GetOrCreateEdgeVertex(Mesh, EdgeVertexCache, BoundaryVerts, Grid, Settings, CellX,     CellY,     0) : -1;
+                const int32 E1 = bE1 ? GetOrCreateEdgeVertex(Mesh, EdgeVertexCache, BoundaryVerts, Grid, Settings, CellX + 1, CellY,     1) : -1;
+                const int32 E2 = bE2 ? GetOrCreateEdgeVertex(Mesh, EdgeVertexCache, BoundaryVerts, Grid, Settings, CellX,     CellY + 1, 0) : -1;
+                const int32 E3 = bE3 ? GetOrCreateEdgeVertex(Mesh, EdgeVertexCache, BoundaryVerts, Grid, Settings, CellX,     CellY,     1) : -1;
 
-		switch (Case)
-		{
-		case 1:  OutPoly = { V00, E0, E3 }; break;
-		case 2:  OutPoly = { V10, E1, E0 }; break;
-		case 3:  OutPoly = { V00, V10, E1, E3 }; break;
-		case 4:  OutPoly = { V11, E2, E1 }; break;
-		case 5:  OutPoly = { V00, E0, E1, V11, E2, E3 }; break;
-		case 6:  OutPoly = { V10, V11, E2, E0 }; break;
-		case 7:  OutPoly = { V00, V10, V11, E2, E3 }; break;
-		case 8:  OutPoly = { V01, E3, E2 }; break;
-		case 9:  OutPoly = { V00, E0, E2, V01 }; break;
-		case 10: OutPoly = { V10, E1, E2, V01, E3, E0 }; break;
-		case 11: OutPoly = { V00, V10, E1, E2, V01 }; break;
-		case 12: OutPoly = { V11, V01, E3, E1 }; break;
-		case 13: OutPoly = { V00, E0, E1, V11, V01 }; break;
-		case 14: OutPoly = { V10, V11, V01, E3, E0 }; break;
-		default: break;
-		}
-	}
+                switch (Case)
+                {
+                case 1:  OutPoly = { V00, E0, E3 }; break;
+                case 2:  OutPoly = { V10, E1, E0 }; break;
+                case 3:  OutPoly = { V00, V10, E1, E3 }; break;
+                case 4:  OutPoly = { V11, E2, E1 }; break;
+                case 5:  OutPoly = { V00, E0, E1, V11, E2, E3 }; break;
+                case 6:  OutPoly = { V10, V11, E2, E0 }; break;
+                case 7:  OutPoly = { V00, V10, V11, E2, E3 }; break;
+                case 8:  OutPoly = { V01, E3, E2 }; break;
+                case 9:  OutPoly = { V00, E0, E2, V01 }; break;
+                case 10: OutPoly = { V10, E1, E2, V01, E3, E0 }; break;
+                case 11: OutPoly = { V00, V10, E1, E2, V01 }; break;
+                case 12: OutPoly = { V11, V01, E3, E1 }; break;
+                case 13: OutPoly = { V00, E0, E1, V11, V01 }; break;
+                case 14: OutPoly = { V10, V11, V01, E3, E0 }; break;
+                default: break;
+                }
+        }
 
-	static void TriangulatePolygonFan(
-		FDynamicMesh3& Mesh,
-		const TArray<int32>& Poly,
-		bool bDeterministic)
-	{
-		const int32 N = Poly.Num();
-		if (N < 3)
-		{
-			return;
-		}
+        static void TriangulatePolygonFan(
+                FDynamicMesh3& Mesh,
+                const TArray<int32>& Poly,
+                bool bDeterministic)
+        {
+                const int32 N = Poly.Num();
+                if (N < 3)
+                {
+                        return;
+                }
 
-		const int32 Root = Poly[0];
-		for (int32 i = 1; i < N - 1; ++i)
-		{
-			AddTriDeterministic(Mesh, Root, Poly[i], Poly[i + 1]);
-		}
-	}
+                const int32 Root = Poly[0];
+                for (int32 i = 1; i < N - 1; ++i)
+                {
+                        AddTriDeterministic(Mesh, Root, Poly[i], Poly[i + 1]);
+                }
+        }
 
-	// ------------------------------------------------------------
-	// Final world->local XY translation (after crop/normals)
-	// ------------------------------------------------------------
-	static void TranslateMeshToLocalXY(FDynamicMesh3& Mesh, const FVector2D& OriginXY)
-	{
-		for (int32 Vid : Mesh.VertexIndicesItr())
-		{
-			if (!Mesh.IsVertex(Vid))
-			{
-				continue;
-			}
+        // ------------------------------------------------------------
+        // Final world->local XY translation (after crop/normals)
+        // ------------------------------------------------------------
+        static void TranslateMeshToLocalXY(FDynamicMesh3& Mesh, const FVector2D& OriginXY)
+        {
+                for (int32 Vid : Mesh.VertexIndicesItr())
+                {
+                        if (!Mesh.IsVertex(Vid))
+                        {
+                                continue;
+                        }
 
-			FVector3d P = Mesh.GetVertex(Vid);
-			P.X -= (double)OriginXY.X;
-			P.Y -= (double)OriginXY.Y;
-			Mesh.SetVertex(Vid, P);
-		}
-	}
+                        FVector3d P = Mesh.GetVertex(Vid);
+                        P.X -= (double)OriginXY.X;
+                        P.Y -= (double)OriginXY.Y;
+                        Mesh.SetVertex(Vid, P);
+                }
+        }
 
 // ------------------------------------------------------------
 // Compute normals into the mesh's primary normal overlay (API-correct)
 // ------------------------------------------------------------
 static void ComputeAndAssignNormals(FDynamicMesh3& Mesh)
 {
-	// Ensure attributes exist
-	if (!Mesh.HasAttributes())
-	{
-		Mesh.EnableAttributes();
-	}
+        // Ensure attributes exist
+        if (!Mesh.HasAttributes())
+        {
+                Mesh.EnableAttributes();
+        }
 
-	// Get the primary normal overlay
-	UE::Geometry::FDynamicMeshNormalOverlay* NormalOverlay =
-		Mesh.Attributes()->PrimaryNormals();
+        // Get the primary normal overlay
+        UE::Geometry::FDynamicMeshNormalOverlay* NormalOverlay =
+                Mesh.Attributes()->PrimaryNormals();
 
-	// In this GeometryCore version, the overlay is created on-demand
-	if (!NormalOverlay)
-	{
-		NormalOverlay = Mesh.Attributes()->PrimaryNormals();
-	}
+        // In this GeometryCore version, the overlay is created on-demand
+        if (!NormalOverlay)
+        {
+                NormalOverlay = Mesh.Attributes()->PrimaryNormals();
+        }
 
-	check(NormalOverlay);
+        check(NormalOverlay);
 
-	// 1) Initialize the overlay layout (one normal per vertex, wired to triangles)
-	UE::Geometry::FMeshNormals::InitializeOverlayToPerVertexNormals(
-		NormalOverlay,
-		/*bUseMeshVertexNormalsIfAvailable=*/false);
+        // 1) Initialize the overlay layout (one normal per vertex, wired to triangles)
+        UE::Geometry::FMeshNormals::InitializeOverlayToPerVertexNormals(
+                NormalOverlay,
+                /*bUseMeshVertexNormalsIfAvailable=*/false);
 
-	// 2) Recompute the actual normal values
-	UE::Geometry::FMeshNormals::QuickRecomputeOverlayNormals(
-		Mesh,
-		/*bInvert=*/false,
-		/*bWeightByArea=*/true,
-		/*bWeightByAngle=*/true,
-		/*bParallelCompute=*/true);
+        // 2) Recompute the actual normal values
+        UE::Geometry::FMeshNormals::QuickRecomputeOverlayNormals(
+                Mesh,
+                /*bInvert=*/false,
+                /*bWeightByArea=*/true,
+                /*bWeightByAngle=*/true,
+                /*bParallelCompute=*/true);
 }
 
-	// ------------------------------------------------------------
-	// Override crop-boundary normals from sampled landscape normals (seam killer)
-	// ------------------------------------------------------------
+        // ------------------------------------------------------------
+        // Override crop-boundary normals from sampled landscape normals (seam killer)
+        // ------------------------------------------------------------
 static void OverrideBoundaryNormalsFromSamples(
     FDynamicMesh3& Mesh,
     const FBox2D& CropBoundsXY,
@@ -378,39 +379,39 @@ static void OverrideBoundaryNormalsFromSamples(
     const TArray<FPCGLandscapeGridSample>& Samples,
     double CellSize)
 
-	{
-		if (!Mesh.HasAttributes())
-		{
-			return;
-		}
+        {
+                if (!Mesh.HasAttributes())
+                {
+                        return;
+                }
 
-		UE::Geometry::FDynamicMeshNormalOverlay* Normals = Mesh.Attributes()->PrimaryNormals();
-		if (!Normals)
-		{
-			return;
-		}
+                UE::Geometry::FDynamicMeshNormalOverlay* Normals = Mesh.Attributes()->PrimaryNormals();
+                if (!Normals)
+                {
+                        return;
+                }
 
-		const double Eps = 1e-4;
+                const double Eps = 1e-4;
 
-		for (int32 Vid : Mesh.VertexIndicesItr())
-		{
-			if (!Mesh.IsVertex(Vid))
-			{
-				continue;
-			}
+                for (int32 Vid : Mesh.VertexIndicesItr())
+                {
+                        if (!Mesh.IsVertex(Vid))
+                        {
+                                continue;
+                        }
 
-			const FVector3d P = Mesh.GetVertex(Vid);
+                        const FVector3d P = Mesh.GetVertex(Vid);
 
-			const bool bOnBoundary =
-				FMath::Abs(P.X - (double)CropBoundsXY.Min.X) <= Eps ||
-				FMath::Abs(P.X - (double)CropBoundsXY.Max.X) <= Eps ||
-				FMath::Abs(P.Y - (double)CropBoundsXY.Min.Y) <= Eps ||
-				FMath::Abs(P.Y - (double)CropBoundsXY.Max.Y) <= Eps;
+                        const bool bOnBoundary =
+                                FMath::Abs(P.X - (double)CropBoundsXY.Min.X) <= Eps ||
+                                FMath::Abs(P.X - (double)CropBoundsXY.Max.X) <= Eps ||
+                                FMath::Abs(P.Y - (double)CropBoundsXY.Min.Y) <= Eps ||
+                                FMath::Abs(P.Y - (double)CropBoundsXY.Max.Y) <= Eps;
 
-			if (!bOnBoundary)
-			{
-				continue;
-			}
+                        if (!bOnBoundary)
+                        {
+                                continue;
+                        }
 
 
 const double fx = (P.X - (double)Grid.GridMinXY.X) / CellSize;
@@ -437,212 +438,565 @@ const int32 SIdx = GX + GY * Grid.GridX;
 const FVector3f N = (FVector3f)Samples[SIdx].Normal;
 
 
-			// Add a new normal element and assign it anywhere this vertex is used
-			const int32 Elem = Normals->AppendElement(N);
+                        // Add a new normal element and assign it anywhere this vertex is used
+                        const int32 Elem = Normals->AppendElement(N);
 
-			// Iterate triangles of this vertex and overwrite the corner normal id
-			Mesh.EnumerateVertexTriangles(Vid, [&](int32 Tid)
-			{
-				if (!Mesh.IsTriangle(Tid))
-				{
-					return;
-				}
+                        // Iterate triangles of this vertex and overwrite the corner normal id
+                        Mesh.EnumerateVertexTriangles(Vid, [&](int32 Tid)
+                        {
+                                if (!Mesh.IsTriangle(Tid))
+                                {
+                                        return;
+                                }
 
-				const FIndex3i TriV = Mesh.GetTriangle(Tid);
-				FIndex3i TriN = Normals->GetTriangle(Tid);
+                                const FIndex3i TriV = Mesh.GetTriangle(Tid);
+                                FIndex3i TriN = Normals->GetTriangle(Tid);
 
-				if (TriV.A == Vid) TriN.A = Elem;
-				if (TriV.B == Vid) TriN.B = Elem;
-				if (TriV.C == Vid) TriN.C = Elem;
+                                if (TriV.A == Vid) TriN.A = Elem;
+                                if (TriV.B == Vid) TriN.B = Elem;
+                                if (TriV.C == Vid) TriN.C = Elem;
 
-				Normals->SetTriangle(Tid, TriN);
-			});
-		}
-	}
+                                Normals->SetTriangle(Tid, TriN);
+                        });
+                }
+        }
+
+        // ------------------------------------------------------------
+        // Override mask-boundary normals from sampled landscape normals
+        //
+        // The mask boundary is defined by the vertices created on edge
+        // intersections during marching squares. These vertices lie on grid
+        // edges between two adjacent grid samples where the mask crosses the
+        // threshold. To ensure seamless shading across the landscape/dynamic
+        // mesh boundary, we replace the computed mesh normals at these
+        // vertices with normals interpolated from the underlying landscape
+        // sample normals. This function must be called after the mesh
+        // normal overlay has been initialized and recomputed (via
+        // ComputeAndAssignNormals), and before the mesh is translated to
+        // local space. The caller should provide the set of mask boundary
+        // vertices recorded during mesh construction.
+        static void OverrideMaskBoundaryNormalsFromSamples(
+            FDynamicMesh3& Mesh,
+            const FPCGLandscapeMeshGridDesc& Grid,
+            const TArray<FPCGLandscapeGridSample>& Samples,
+            double CellSize,
+            const TSet<int32>& MaskBoundaryVerts)
+        {
+                if (!Mesh.HasAttributes())
+                {
+                        return;
+                }
+
+                UE::Geometry::FDynamicMeshNormalOverlay* Normals = Mesh.Attributes()->PrimaryNormals();
+                if (!Normals)
+                {
+                        return;
+                }
+
+                // Small epsilon for comparing floating-point coordinates to integer grid lines
+                const double Eps = 1e-4;
+
+                const double MinX = (double)Grid.GridMinXY.X;
+                const double MinY = (double)Grid.GridMinXY.Y;
+                const int32 GridX = Grid.GridX;
+                const int32 GridY = Grid.GridY;
+
+                for (int32 Vid : MaskBoundaryVerts)
+                {
+                        if (!Mesh.IsVertex(Vid))
+                        {
+                                continue;
+                        }
+
+                        const FVector3d P = Mesh.GetVertex(Vid);
+
+                        // Convert XY position into fractional grid coordinates
+                        const double fx = (P.X - MinX) / CellSize;
+                        const double fy = (P.Y - MinY) / CellSize;
+
+                        // Compute integer cell indices and fractional offsets
+                        int32 ix = (int32)FMath::Floor(fx);
+                        int32 iy = (int32)FMath::Floor(fy);
+                        double fracX = fx - (double)ix;
+                        double fracY = fy - (double)iy;
+
+                        // Adjust for floating point near-integer cases
+                        // Check if the point lies on a horizontal grid line (fy ~ integer)
+                        bool bOnYGridLine = (FMath::Abs(fracY) <= Eps) || (FMath::Abs(fracY - 1.0) <= Eps);
+                        // Check if the point lies on a vertical grid line (fx ~ integer)
+                        bool bOnXGridLine = (FMath::Abs(fracX) <= Eps) || (FMath::Abs(fracX - 1.0) <= Eps);
+
+                        // Only override normals for vertices that lie on grid lines (mask edges)
+                        if (!bOnXGridLine && !bOnYGridLine)
+                        {
+                                continue;
+                        }
+
+                        // Clamp indices to valid grid range
+                        if (ix < 0 || ix >= GridX || iy < 0 || iy >= GridY)
+                        {
+                                continue;
+                        }
+
+                        FVector3d NewNormal(0, 0, 1);
+                        bool bComputed = false;
+
+                        if (bOnYGridLine && !bOnXGridLine)
+                        {
+                                // Horizontal edge: interpolate normals along X
+                                int32 gx0 = ix;
+                                int32 gx1 = ix + 1;
+                                // Determine the integer Y coordinate (round to nearest)
+                                int32 gy = (int32)FMath::RoundToDouble(fy);
+                                if (gx1 < GridX && gy >= 0 && gy < GridY)
+                                {
+                                        const double t = FMath::Clamp(fracX, 0.0, 1.0);
+                                        const int32 S0Idx = gx0 + gy * GridX;
+                                        const int32 S1Idx = gx1 + gy * GridX;
+                                        const FVector3d N0 = Samples[S0Idx].Normal;
+                                        const FVector3d N1 = Samples[S1Idx].Normal;
+                                        NewNormal = LerpNormalSafe(N0, N1, t);
+                                        bComputed = true;
+                                }
+                        }
+                        else if (bOnXGridLine && !bOnYGridLine)
+                        {
+                                // Vertical edge: interpolate normals along Y
+                                int32 gy0 = iy;
+                                int32 gy1 = iy + 1;
+                                int32 gx = (int32)FMath::RoundToDouble(fx);
+                                if (gy1 < GridY && gx >= 0 && gx < GridX)
+                                {
+                                        const double t = FMath::Clamp(fracY, 0.0, 1.0);
+                                        const int32 S0Idx = gx + gy0 * GridX;
+                                        const int32 S1Idx = gx + gy1 * GridX;
+                                        const FVector3d N0 = Samples[S0Idx].Normal;
+                                        const FVector3d N1 = Samples[S1Idx].Normal;
+                                        NewNormal = LerpNormalSafe(N0, N1, t);
+                                        bComputed = true;
+                                }
+                        }
+
+                        if (!bComputed)
+                        {
+                                // Fallback: use nearest grid sample normal
+                                int32 gx = FMath::Clamp(ix, 0, GridX - 1);
+                                int32 gy = FMath::Clamp(iy, 0, GridY - 1);
+                                const int32 SIdx = gx + gy * GridX;
+                                NewNormal = Samples[SIdx].Normal;
+                        }
+
+                        // Append the new normal element to the overlay and assign it to all
+                        // triangles incident on this vertex
+                        const int32 Elem = Normals->AppendElement((FVector3f)NewNormal);
+                        Mesh.EnumerateVertexTriangles(Vid, [&](int32 Tid)
+                        {
+                                if (!Mesh.IsTriangle(Tid))
+                                {
+                                        return;
+                                }
+                                const FIndex3i TriV = Mesh.GetTriangle(Tid);
+                                FIndex3i TriN = Normals->GetTriangle(Tid);
+                                if (TriV.A == Vid) TriN.A = Elem;
+                                if (TriV.B == Vid) TriN.B = Elem;
+                                if (TriV.C == Vid) TriN.C = Elem;
+                                Normals->SetTriangle(Tid, TriN);
+                        });
+                }
+        }
 
 } // namespace Builder_Internal
 
-	bool BuildMeshFromSamples(
-		const FPCGLandscapeMeshGridDesc& GridDesc,
-		const FPCGLandscapeMeshBuilderSettings& Settings,
-		const FBox2D& CropBoundsXY,
-		FDynamicMesh3& OutMesh,
-		FPCGLandscapeMeshConstraints& OutConstraints,
-		FPCGLandscapeMeshBuilderStats* OutStats)
-	{
-		if (!GridDesc.Samples || GridDesc.GridX < 2 || GridDesc.GridY < 2)
-		{
-			return false;
-		}
+bool BuildMeshFromSamples(
+                const FPCGLandscapeMeshGridDesc& GridDesc,
+                const FPCGLandscapeMeshBuilderSettings& Settings,
+                const FBox2D& CropBoundsXY,
+                FDynamicMesh3& OutMesh,
+                FPCGLandscapeMeshConstraints& OutConstraints,
+                FPCGLandscapeMeshBuilderStats* OutStats)
+        {
+                if (!GridDesc.Samples || GridDesc.GridX < 2 || GridDesc.GridY < 2)
+                {
+                        return false;
+                }
 
-		const int32 GridX = GridDesc.GridX;
-		const int32 GridY = GridDesc.GridY;
+                const int32 GridX = GridDesc.GridX;
+                const int32 GridY = GridDesc.GridY;
 
-		const TArray<FPCGLandscapeGridSample>& Samples = *GridDesc.Samples;
-		if (Samples.Num() != GridX * GridY)
-		{
-			return false;
-		}
+                const TArray<FPCGLandscapeGridSample>& Samples = *GridDesc.Samples;
+                if (Samples.Num() != GridX * GridY)
+                {
+                        return false;
+                }
 
-		FPCGLandscapeMeshBuilderStats Stats;
-		Stats.GridX = GridX;
-		Stats.GridY = GridY;
-		Stats.NumCellsTotal = (GridX - 1) * (GridY - 1);
+                FPCGLandscapeMeshBuilderStats Stats;
+                Stats.GridX = GridX;
+                Stats.GridY = GridY;
+                Stats.NumCellsTotal = (GridX - 1) * (GridY - 1);
 
-		OutMesh.Clear();
-		OutConstraints.ConstrainedVertices.Reset();
-		OutConstraints.ConstrainedEdges.Reset();
+                OutMesh.Clear();
+                OutConstraints.ConstrainedVertices.Reset();
+                OutConstraints.ConstrainedEdges.Reset();
 
-		// 1) Create base grid corner vertices (world space for now)
-		TArray<int32> CornerVID;
-		CornerVID.SetNumUninitialized(GridX * GridY);
+                // 1) Create base grid corner vertices (world space for now)
+                TArray<int32> CornerVID;
+                CornerVID.SetNumUninitialized(GridX * GridY);
 
-		for (int32 Y = 0; Y < GridY; ++Y)
-		{
-			for (int32 X = 0; X < GridX; ++X)
-			{
-				const FPCGLandscapeGridSample& S = Samples[Builder_Internal::SampleIndex(X, Y, GridX)];
-				const FVector3d P = Builder_Internal::MakePos(GridDesc.GridMinXY, Settings.CellSize, X, Y, S.Height);
-				const int32 Vid = OutMesh.AppendVertex(P);
-				CornerVID[Builder_Internal::SampleIndex(X, Y, GridX)] = Vid;
-			}
-		}
+                for (int32 Y = 0; Y < GridY; ++Y)
+                {
+                        for (int32 X = 0; X < GridX; ++X)
+                        {
+                                const FPCGLandscapeGridSample& S = Samples[Builder_Internal::SampleIndex(X, Y, GridX)];
+                                const FVector3d P = Builder_Internal::MakePos(GridDesc.GridMinXY, Settings.CellSize, X, Y, S.Height);
+                                const int32 Vid = OutMesh.AppendVertex(P);
+                                CornerVID[Builder_Internal::SampleIndex(X, Y, GridX)] = Vid;
+                        }
+                }
 
-		// Marching squares edge vertex cache + boundary vertices set
-		TMap<uint64, int32> EdgeVertexCache;
-		EdgeVertexCache.Reserve(Stats.NumCellsTotal * 2);
+                // Marching squares edge vertex cache + boundary vertices set
+                TMap<uint64, int32> EdgeVertexCache;
+                EdgeVertexCache.Reserve(Stats.NumCellsTotal * 2);
 
-		TSet<int32> MaskBoundaryVerts;
+                TSet<int32> MaskBoundaryVerts;
 
-		// 2) Build topology per cell (hybrid)
-		TArray<int32> Poly;
-		Poly.Reserve(8);
+                // 2) Build topology per cell (hybrid)
+                TArray<int32> Poly;
+                Poly.Reserve(8);
 
-		for (int32 Y = 0; Y < GridY - 1; ++Y)
-		{
-			for (int32 X = 0; X < GridX - 1; ++X)
-			{
-				const int32 I00 = Builder_Internal::SampleIndex(X,     Y,     GridX);
-				const int32 I10 = Builder_Internal::SampleIndex(X + 1, Y,     GridX);
-				const int32 I11 = Builder_Internal::SampleIndex(X + 1, Y + 1, GridX);
-				const int32 I01 = Builder_Internal::SampleIndex(X,     Y + 1, GridX);
+                for (int32 Y = 0; Y < GridY - 1; ++Y)
+                {
+                        for (int32 X = 0; X < GridX - 1; ++X)
+                        {
+                                const int32 I00 = Builder_Internal::SampleIndex(X,     Y,     GridX);
+                                const int32 I10 = Builder_Internal::SampleIndex(X + 1, Y,     GridX);
+                                const int32 I11 = Builder_Internal::SampleIndex(X + 1, Y + 1, GridX);
+                                const int32 I01 = Builder_Internal::SampleIndex(X,     Y + 1, GridX);
 
-				const float M00 = Samples[I00].Mask;
-				const float M10 = Samples[I10].Mask;
-				const float M11 = Samples[I11].Mask;
-				const float M01 = Samples[I01].Mask;
+                                const float M00 = Samples[I00].Mask;
+                                const float M10 = Samples[I10].Mask;
+                                const float M11 = Samples[I11].Mask;
+                                const float M01 = Samples[I01].Mask;
 
-				const bool S00 = Builder_Internal::IsSolid(M00, Settings.MaskThreshold);
-				const bool S10 = Builder_Internal::IsSolid(M10, Settings.MaskThreshold);
-				const bool S11 = Builder_Internal::IsSolid(M11, Settings.MaskThreshold);
-				const bool S01 = Builder_Internal::IsSolid(M01, Settings.MaskThreshold);
+                                const bool S00 = Builder_Internal::IsSolid(M00, Settings.MaskThreshold);
+                                const bool S10 = Builder_Internal::IsSolid(M10, Settings.MaskThreshold);
+                                const bool S11 = Builder_Internal::IsSolid(M11, Settings.MaskThreshold);
+                                const bool S01 = Builder_Internal::IsSolid(M01, Settings.MaskThreshold);
 
-				const int32 NumSolid = (int32)S00 + (int32)S10 + (int32)S11 + (int32)S01;
+                                const int32 NumSolid = (int32)S00 + (int32)S10 + (int32)S11 + (int32)S01;
 
-				if (NumSolid == 0)
-				{
-					Stats.NumCellsEmpty++;
-					continue;
-				}
-				if (NumSolid == 4)
-				{
-					Stats.NumCellsSolid++;
+                                if (NumSolid == 0)
+                                {
+                                        Stats.NumCellsEmpty++;
+                                        continue;
+                                }
+                                if (NumSolid == 4)
+                                {
+                                        Stats.NumCellsSolid++;
 
-					const int32 V00 = CornerVID[I00];
-					const int32 V10 = CornerVID[I10];
-					const int32 V11 = CornerVID[I11];
-					const int32 V01 = CornerVID[I01];
+                                        const int32 V00 = CornerVID[I00];
+                                        const int32 V10 = CornerVID[I10];
+                                        const int32 V11 = CornerVID[I11];
+                                        const int32 V01 = CornerVID[I01];
 
-					if (Settings.bSolidQuadsUseDiagBLtoTR)
-					{
-						Builder_Internal::AddTriDeterministic(OutMesh, V00, V10, V11);
-						Builder_Internal::AddTriDeterministic(OutMesh, V00, V11, V01);
-					}
-					else
-					{
-						Builder_Internal::AddTriDeterministic(OutMesh, V00, V10, V01);
-						Builder_Internal::AddTriDeterministic(OutMesh, V10, V11, V01);
-					}
+                                        if (Settings.bSolidQuadsUseDiagBLtoTR)
+                                        {
+                                                Builder_Internal::AddTriDeterministic(OutMesh, V00, V10, V11);
+                                                Builder_Internal::AddTriDeterministic(OutMesh, V00, V11, V01);
+                                        }
+                                        else
+                                        {
+                                                Builder_Internal::AddTriDeterministic(OutMesh, V00, V10, V01);
+                                                Builder_Internal::AddTriDeterministic(OutMesh, V10, V11, V01);
+                                        }
 
-					continue;
-				}
+                                        continue;
+                                }
 
-				Stats.NumCellsMixed++;
+                                Stats.NumCellsMixed++;
 
-				if (!Settings.bUseMarchingSquares)
-				{
-					continue;
-				}
+                                if (!Settings.bUseMarchingSquares)
+                                {
+                                        continue;
+                                }
 
-				const int32 V00 = CornerVID[I00];
-				const int32 V10 = CornerVID[I10];
-				const int32 V11 = CornerVID[I11];
-				const int32 V01 = CornerVID[I01];
+                                const int32 V00 = CornerVID[I00];
+                                const int32 V10 = CornerVID[I10];
+                                const int32 V11 = CornerVID[I11];
+                                const int32 V01 = CornerVID[I01];
 
-				Builder_Internal::BuildCellPolygon_MarchingSquares(
-					OutMesh,
-					EdgeVertexCache,
-					MaskBoundaryVerts,
-					GridDesc,
-					Settings,
-					X, Y,
-					V00, V10, V11, V01,
-					S00, S10, S11, S01,
-					Poly);
+                                Builder_Internal::BuildCellPolygon_MarchingSquares(
+                                        OutMesh,
+                                        EdgeVertexCache,
+                                        MaskBoundaryVerts,
+                                        GridDesc,
+                                        Settings,
+                                        X, Y,
+                                        V00, V10, V11, V01,
+                                        S00, S10, S11, S01,
+                                        Poly);
 
-				Builder_Internal::TriangulatePolygonFan(OutMesh, Poly, Settings.bDeterministicTriangulation);
-			}
-		}
+                                Builder_Internal::TriangulatePolygonFan(OutMesh, Poly, Settings.bDeterministicTriangulation);
+                        }
+                }
 
-		Stats.NumTrianglesBeforeCrop = OutMesh.TriangleCount();
+                Stats.NumTrianglesBeforeCrop = OutMesh.TriangleCount();
 
-		// 3) Promote mask-boundary vertices to hard constraints
-		for (int32 Vid : MaskBoundaryVerts)
-		{
-			OutConstraints.ConstrainedVertices.Add(Vid);
-		}
+                // 3) Promote mask-boundary vertices to hard constraints
+                for (int32 Vid : MaskBoundaryVerts)
+                {
+                        OutConstraints.ConstrainedVertices.Add(Vid);
+                }
 
-		// 4) Add crop boundary constraints (tile seam safety)
-		if (Settings.bConstrainCropBoundary)
-		{
-			Builder_Internal::AddCropBoundaryConstraints(CropBoundsXY, Settings, OutMesh, OutConstraints);
-		}
+                // 4) Add crop boundary constraints (tile seam safety)
+                if (Settings.bConstrainCropBoundary)
+                {
+                        Builder_Internal::AddCropBoundaryConstraints(CropBoundsXY, Settings, OutMesh, OutConstraints);
+                }
 
-		// 5) Convert constrained vertices -> constrained edges (incident edges)
-		Builder_Internal::AccumulateConstraintEdgesFromVertices(OutMesh, OutConstraints);
+                // 5) Convert constrained vertices -> constrained edges (incident edges)
+                Builder_Internal::AccumulateConstraintEdgesFromVertices(OutMesh, OutConstraints);
 
-		// 6) Subdivision DISABLED (requested)
-		// if (Settings.bEnableSubdivision && Settings.Subdivide.SubdivisionLevels > 0)
-		// {
-		//     ApplyPNSubdivideInterior(OutMesh, OutConstraints, Settings.Subdivide, &Stats.SubdivisionStats);
-		// }
+                // 6) If subdivision is enabled, refine boundary edges and subdivide the interior.
+                //    We support two subdivision modes: PN triangles (smooth) and a uniform
+                //    midpoint-based scheme (used when PNStrength <= 0). The latter acts as a
+                //    basic Catmull‑Clark/Loop approximation for triangular meshes by
+                //    splitting each interior triangle into four and averaging vertex positions.
+                if (Settings.bEnableSubdivision && Settings.Subdivide.SubdivisionLevels > 0)
+                {
+                        // Pre-refine constrained edges so the boundary edges match the interior
+                        // resolution. Split each constrained edge NumSubdivs times. Newly
+                        // created vertices are marked as constrained so they remain fixed.
+                        TSet<int32> EdgesToSplit = OutConstraints.ConstrainedEdges;
+                        TSet<int32> NextEdges;
+                        const int32 NumSubdivs = Settings.Subdivide.SubdivisionLevels;
+                        for (int32 SubdivLevel = 0; SubdivLevel < NumSubdivs; ++SubdivLevel)
+                        {
+                                NextEdges.Reset();
+                                for (int32 EdgeID : EdgesToSplit)
+                                {
+                                        if (!OutMesh.IsEdge(EdgeID))
+                                        {
+                                                continue;
+                                        }
+                                        FDynamicMesh3::FEdgeSplitInfo SplitInfo;
+                                        OutMesh.SplitEdge(EdgeID, SplitInfo, 0.5);
+                                        if (SplitInfo.NewVertex != FDynamicMesh3::InvalidID)
+                                        {
+                                                const int32 NewVertID = SplitInfo.NewVertex;
+                                                OutConstraints.ConstrainedVertices.Add(NewVertID);
+                                                for (int32 i = 0; i < 3; ++i)
+                                                {
+                                                        const int32 NewEdgeID = SplitInfo.NewEdges[i];
+                                                        if (NewEdgeID != FDynamicMesh3::InvalidID && OutMesh.IsEdge(NewEdgeID))
+                                                        {
+                                                                NextEdges.Add(NewEdgeID);
+                                                        }
+                                                }
+                                        }
+                                }
+                                EdgesToSplit = NextEdges;
+                        }
+                        // Recompute constrained edges after splitting
+                        OutConstraints.ConstrainedEdges.Reset();
+                        Builder_Internal::AccumulateConstraintEdgesFromVertices(OutMesh, OutConstraints);
 
-		// 7) Crop back to partition bounds (XY) -- still in world space here
-		Builder_Internal::CropMeshToBoundsXY(OutMesh, CropBoundsXY);
-		Stats.NumTrianglesAfterCrop = OutMesh.TriangleCount();
+                        // Decide which subdivision method to use. If PNStrength is positive,
+                        // run PN triangles; if PNStrength is negative, apply a Catmull‑Clark–style
+                        // refinement (uniform subdivision followed by a smoothing pass); otherwise
+                        // apply a simple uniform midpoint subdivision to interior (non‑constrained) triangles.
 
-		// 8) Optional cleanup
-		if (Settings.bRemoveIsolatedVertices)
-		{
-			Builder_Internal::RemoveIsolatedVertices(OutMesh);
-		}
+                        // Helper lambda: split each interior triangle into four by inserting
+                        // midpoints on edges and skipping triangles adjacent to constrained edges.
+                        auto UniformSubdivideInterior = [&](FDynamicMesh3& Mesh, const FPCGLandscapeMeshConstraints& Constraints, int32 Levels)
+                        {
+                                for (int32 Lvl = 0; Lvl < Levels; ++Lvl)
+                                {
+                                        // Copy triangle IDs as we will modify the mesh
+                                        TArray<int32> TriList;
+                                        TriList.Reserve(Mesh.TriangleCount());
+                                        for (int32 Tid : Mesh.TriangleIndicesItr())
+                                        {
+                                                TriList.Add(Tid);
+                                        }
+                                        // Map of edges to new midpoint vertex IDs
+                                        TMap<uint64, int32> EdgeMidpoints;
+                                        EdgeMidpoints.Reserve(Mesh.EdgeCount());
+                                        // Lambda to get or create midpoint on an edge
+                                        auto GetMidpoint = [&](int32 VA, int32 VB)->int32
+                                        {
+                                                const int32 MinV = FMath::Min(VA, VB);
+                                                const int32 MaxV = FMath::Max(VA, VB);
+                                                const uint64 Key = ((uint64)MinV << 32) | (uint64)MaxV;
+                                                if (int32* Found = EdgeMidpoints.Find(Key))
+                                                {
+                                                        return *Found;
+                                                }
+                                                const FVector3d PA = Mesh.GetVertex(VA);
+                                                const FVector3d PB = Mesh.GetVertex(VB);
+                                                const FVector3d Mid = (PA + PB) * 0.5;
+                                                int32 NewID = Mesh.AppendVertex(Mid);
+                                                EdgeMidpoints.Add(Key, NewID);
+                                                return NewID;
+                                        };
 
-		// 9) Compute normals in WORLD space
-		Builder_Internal::ComputeAndAssignNormals(OutMesh);
+                                        for (int32 Tid : TriList)
+                                        {
+                                                if (!Mesh.IsTriangle(Tid))
+                                                {
+                                                        continue;
+                                                }
+                                                // Skip triangles that touch constrained edges
+                                                bool bSkip = false;
+                                                FIndex3i TriVerts = Mesh.GetTriangle(Tid);
+                                                FIndex3i TriEdges = Mesh.GetTriEdges(Tid);
+                                                for (int j = 0; j < 3; ++j)
+                                                {
+                                                        if (Constraints.ConstrainedEdges.Contains(TriEdges[j]))
+                                                        {
+                                                                bSkip = true;
+                                                                break;
+                                                        }
+                                                }
+                                                if (bSkip)
+                                                {
+                                                        continue;
+                                                }
+                                                int32 V0 = TriVerts.A;
+                                                int32 V1 = TriVerts.B;
+                                                int32 V2 = TriVerts.C;
+                                                // Compute midpoint vertices
+                                                int32 M01 = GetMidpoint(V0, V1);
+                                                int32 M12 = GetMidpoint(V1, V2);
+                                                int32 M20 = GetMidpoint(V2, V0);
+                                                // Remove the original triangle
+                                                Mesh.RemoveTriangle(Tid, true, false);
+                                                // Add subdivided triangles
+                                                Mesh.AppendTriangle(V0, M01, M20);
+                                                Mesh.AppendTriangle(V1, M12, M01);
+                                                Mesh.AppendTriangle(V2, M20, M12);
+                                                Mesh.AppendTriangle(M01, M12, M20);
+                                        }
+                                        // After each level, constraints remain valid on boundary edges
+                                }
+                        };
 
-		// 10) Override boundary normals from sampled landscape normals (seam-free)
-		Builder_Internal::OverrideBoundaryNormalsFromSamples(OutMesh, CropBoundsXY, GridDesc, Samples, Settings.CellSize);
+                        // Helper lambda: apply a simple Laplacian smoothing to interior
+                        // (non‑constrained) vertices. Each vertex is moved towards the
+                        // average of its one‑ring neighbors by a factor Lambda.
+                        auto SmoothInteriorVertices = [&](FDynamicMesh3& Mesh, const FPCGLandscapeMeshConstraints& Constraints, double Lambda)
+                        {
+                                // Temporary array for new vertex positions
+                                TArray<FVector3d> NewPos;
+                                NewPos.SetNum(Mesh.MaxVertexID());
+                                TBitArray<> HasNew;
+                                HasNew.Init(false, Mesh.MaxVertexID());
+                                for (int32 Vid : Mesh.VertexIndicesItr())
+                                {
+                                        if (!Mesh.IsVertex(Vid))
+                                        {
+                                                continue;
+                                        }
+                                        if (Constraints.ConstrainedVertices.Contains(Vid))
+                                        {
+                                                continue; // keep boundary vertex fixed
+                                        }
+                                        // Collect one‑ring neighbor positions
+                                        FVector3d Sum(0,0,0);
+                                        int32 Count = 0;
+                                        Mesh.EnumerateVertexEdges(Vid, [&](int32 Eid)
+                                        {
+                                                if (!Mesh.IsEdge(Eid))
+                                                {
+                                                        return;
+                                                }
+                                                FIndex2i EV = Mesh.GetEdgeV(Eid);
+                                                int32 OtherV = (EV.A == Vid) ? EV.B : EV.A;
+                                                if (Mesh.IsVertex(OtherV))
+                                                {
+                                                        Sum += Mesh.GetVertex(OtherV);
+                                                        Count++;
+                                                }
+                                        });
+                                        if (Count > 0)
+                                        {
+                                                FVector3d Avg = Sum * (1.0 / (double)Count);
+                                                const FVector3d Cur = Mesh.GetVertex(Vid);
+                                                FVector3d P = Cur * (1.0 - Lambda) + Avg * Lambda;
+                                                NewPos[Vid] = P;
+                                                HasNew[Vid] = true;
+                                        }
+                                }
+                                // Apply new positions
+                                for (int32 Vid : Mesh.VertexIndicesItr())
+                                {
+                                        if (HasNew[Vid])
+                                        {
+                                                Mesh.SetVertex(Vid, NewPos[Vid]);
+                                        }
+                                }
+                        };
 
+                        if (Settings.Subdivide.PNStrength > 0.0f)
+                        {
+                                // Standard PN subdivision for smooth curved surfaces
+                                ApplyPNSubdivideInterior(OutMesh, OutConstraints, Settings.Subdivide, &Stats.SubdivisionStats);
+                        }
+                        else if (Settings.Subdivide.PNStrength < 0.0f)
+                        {
+                                // Catmull‑Clark‑style: perform uniform subdivision and then
+                                // smooth interior vertices. Each negative PNStrength level
+                                // triggers one uniform subdiv + smoothing pass.
+                                const int32 Levels = Settings.Subdivide.SubdivisionLevels;
+                                for (int32 Lvl = 0; Lvl < Levels; ++Lvl)
+                                {
+                                        UniformSubdivideInterior(OutMesh, OutConstraints, 1);
+                                        // Apply smoothing with a moderate factor (0.5). A smaller
+                                        // lambda preserves more of the original shape.
+                                        SmoothInteriorVertices(OutMesh, OutConstraints, 0.5);
+                                }
+                        }
+                        else
+                        {
+                                // Simple uniform subdivision without smoothing
+                                UniformSubdivideInterior(OutMesh, OutConstraints, Settings.Subdivide.SubdivisionLevels);
+                        }
+                }
 
-		// 11) Convert mesh to local space in XY (does not affect normals)
-		const FVector2D OriginXY = CropBoundsXY.GetCenter();
-		Builder_Internal::TranslateMeshToLocalXY(OutMesh, OriginXY);
+                // 7) Crop back to partition bounds (XY) -- still in world space here
+                Builder_Internal::CropMeshToBoundsXY(OutMesh, CropBoundsXY);
+                Stats.NumTrianglesAfterCrop = OutMesh.TriangleCount();
 
-		if (OutStats)
-		{
-			*OutStats = Stats;
-		}
+                // 8) Optional cleanup
+                if (Settings.bRemoveIsolatedVertices)
+                {
+                        Builder_Internal::RemoveIsolatedVertices(OutMesh);
+                }
 
-		return (OutMesh.TriangleCount() > 0);
-	}
+                // 9) Compute normals in WORLD space
+                Builder_Internal::ComputeAndAssignNormals(OutMesh);
+
+                // 10) Override boundary normals from sampled landscape normals (seam-free)
+                Builder_Internal::OverrideBoundaryNormalsFromSamples(OutMesh, CropBoundsXY, GridDesc, Samples, Settings.CellSize);
+                // Also override normals along the mask boundary using sampled normals.
+                if (MaskBoundaryVerts.Num() > 0)
+                {
+                        Builder_Internal::OverrideMaskBoundaryNormalsFromSamples(
+                                OutMesh,
+                                GridDesc,
+                                Samples,
+                                Settings.CellSize,
+                                MaskBoundaryVerts);
+                }
+
+                // 11) Convert mesh to local space in XY (does not affect normals)
+                const FVector2D OriginXY = CropBoundsXY.GetCenter();
+                Builder_Internal::TranslateMeshToLocalXY(OutMesh, OriginXY);
+
+                if (OutStats)
+                {
+                        *OutStats = Stats;
+                }
+
+                return (OutMesh.TriangleCount() > 0);
+        }
 } // namespace WDEditor::PCG

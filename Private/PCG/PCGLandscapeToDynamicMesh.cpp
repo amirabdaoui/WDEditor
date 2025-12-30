@@ -260,10 +260,15 @@
          Build.CellSize = CellSize;
          Build.MaskThreshold = Settings->MaskThreshold;
          Build.bUseMarchingSquares = Settings->bUseMarchingSquares;
-         Build.bEnableSubdivision = Settings->bEnableSubdivision;
-         Build.bRemoveIsolatedVertices = Settings->bRemoveIsolatedVertices;
-         Build.Subdivide.SubdivisionLevels = Settings->SubdivisionLevels;
-         Build.Subdivide.PNStrength = Settings->PNStrength;
+        Build.bEnableSubdivision = Settings->bEnableSubdivision;
+        Build.bRemoveIsolatedVertices = Settings->bRemoveIsolatedVertices;
+        Build.Subdivide.SubdivisionLevels = Settings->SubdivisionLevels;
+        Build.Subdivide.PNStrength = Settings->PNStrength;
+
+        // Propagate boundary subdivision preference. If bSubdividePartitionBoundary is true,
+        // disable crop boundary constraints so PN subdivision will interpolate across the
+        // partition seam. Otherwise, constrain crop boundary edges to prevent refinement.
+        Build.bConstrainCropBoundary = !Settings->bSubdividePartitionBoundary;
  
          UE::Geometry::FDynamicMesh3 BuiltMesh;
          WDEditor::PCG::FPCGLandscapeMeshConstraints Constraints;
