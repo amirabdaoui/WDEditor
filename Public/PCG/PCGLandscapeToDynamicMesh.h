@@ -2,6 +2,9 @@
  
  #include "PCGSettings.h"
  #include "PCGLandscapeToDynamicMesh.generated.h"
+
+// Forward declaration for material interface used to assign a material to the generated mesh
+class UMaterialInterface;
  
  UENUM(BlueprintType)
  enum class EPCGLandscapeBoundsIntersectMode : uint8
@@ -103,6 +106,14 @@
          UPROPERTY(EditAnywhere, BlueprintReadWrite, Category="Mask",
                  meta=(PCG_Overridable))
          bool bInvertMask = false;
+
+    // ============================================================
+    // Material
+    // ============================================================
+
+    /** Optional material to assign to the generated dynamic mesh. If not set, the mesh will have no material. */
+    UPROPERTY(EditAnywhere, BlueprintReadWrite, Category="Mesh", meta=(PCG_Overridable))
+    TObjectPtr<UMaterialInterface> Material = nullptr;
  
          // ============================================================
          // Subdivision

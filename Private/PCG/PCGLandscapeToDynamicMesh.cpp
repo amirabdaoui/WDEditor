@@ -18,6 +18,9 @@
  /* WDEditor */
  #include "PCG/PCGLandscapeSampling.h"
  #include "PCG/PCGLandscapeMeshBuilder.h"
+
+// Materials
+#include "Materials/MaterialInterface.h"
  
  /* Math */
  #include "Math/UnrealMathUtility.h"
@@ -276,6 +279,19 @@
                  EmitOutput();
                  return true;
          }
+
+        // ============================================================
+        // Assign material to the dynamic mesh data
+        // ============================================================
+        // If a material is specified in the settings, assign it to the output mesh. Note that
+        // SetMaterials expects an array of materials corresponding to material slots on the
+        // dynamic mesh. We only assign a single material slot here.
+        if (Settings->Material)
+        {
+            TArray<UMaterialInterface*> MatArray;
+            MatArray.Add(Settings->Material);
+            OutMeshData->SetMaterials(MatArray);
+        }
  
          // ============================================================
          // Write result
