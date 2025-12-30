@@ -101,33 +101,25 @@
                                          Sample.Normal = FVector3d::UpVector;
                                  }
  
-                                 // --------------------------------------------------------------
-                                 // Mask sampling: sample named landscape layer or fallback to density
-                                 // --------------------------------------------------------------
-                                 float MaskValue = 1.0f;
-                                 if (!Settings.MaskLayerName.IsNone())
-                                 {
-                                         // Sample the named landscape layer weight at the projected position.
-                                         // Note: you must implement GetLayerWeightAt(...) on UPCGLandscapeData or
-                                         // retrieve the weight from metadata if layer weights are enabled.
-                                         MaskValue = LandscapeData->GetLayerWeightAt(
-                                                 FVector(WorldPos.X, WorldPos.Y, 0.0),
-                                                 Settings.MaskLayerName);
-                                 }
-                                 else
-                                 {
-                                         // Fallback: use density (visibility)
-                                         MaskValue = FMath::Clamp(Point.Density, 0.0f, 1.0f);
-                                 }
+                                // --------------------------------------------------------------
+                                // Mask sampling: use the point's density (visibility) as the mask.
+                                // UPCGLandscapeData does not expose an API to directly sample
+                                // landscape layer weights at an arbitrary location, so we cannot
+                                // query Settings.MaskLayerName here.  Instead, always use the
+                                // projected point's density as the mask.  If a layer name is provided,
+                                // it is ignored but the density sampling remains consistent with
+                                // the default PCG Landscape node behaviour.
+                                // --------------------------------------------------------------
+                                float MaskValue = FMath::Clamp(Point.Density, 0.0f, 1.0f);
  
-                                 // Apply optional inversion
-                                 if (Settings.bInvertMask)
-                                 {
-                                         MaskValue = 1.0f - MaskValue;
-                                 }
- 
-                                 // Clamp and store mask
-                                 Sample.Mask = FMath::Clamp(MaskValue, 0.0f, 1.0f);
+                                // Apply optional inversion and store the mask
+                                if (Settings.bInvertMask)
+                                {
+                                        MaskValue = 1.0f - MaskValue;
+                                }
+
+                                // MaskValue is already clamped above; no need to clamp again
+                                Sample.Mask = MaskValue;
                          }
                  }
  
