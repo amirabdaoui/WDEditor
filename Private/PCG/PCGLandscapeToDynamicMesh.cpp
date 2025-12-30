@@ -260,15 +260,13 @@
          Build.CellSize = CellSize;
          Build.MaskThreshold = Settings->MaskThreshold;
          Build.bUseMarchingSquares = Settings->bUseMarchingSquares;
-        Build.bEnableSubdivision = Settings->bEnableSubdivision;
+        // Subdivision settings have been deprecated in this node. Refinement should be handled
+        // by a separate subdivision node. The build settings related to subdivision are left
+        // at their defaults. We continue to set removal and compaction flags.
         Build.bRemoveIsolatedVertices = Settings->bRemoveIsolatedVertices;
-        Build.Subdivide.SubdivisionLevels = Settings->SubdivisionLevels;
-        Build.Subdivide.PNStrength = Settings->PNStrength;
-
-        // Propagate boundary subdivision preference. If bSubdividePartitionBoundary is true,
-        // disable crop boundary constraints so PN subdivision will interpolate across the
-        // partition seam. Otherwise, constrain crop boundary edges to prevent refinement.
-        Build.bConstrainCropBoundary = !Settings->bSubdividePartitionBoundary;
+        // Do not alter bConstrainCropBoundary based on subdivision. Always constrain the crop
+        // boundary so that the mesh matches the landscape bounds.
+        Build.bConstrainCropBoundary = true;
  
          UE::Geometry::FDynamicMesh3 BuiltMesh;
          WDEditor::PCG::FPCGLandscapeMeshConstraints Constraints;

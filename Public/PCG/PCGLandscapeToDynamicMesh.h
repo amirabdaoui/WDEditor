@@ -115,37 +115,17 @@ class UMaterialInterface;
     UPROPERTY(EditAnywhere, BlueprintReadWrite, Category="Mesh", meta=(PCG_Overridable))
     TObjectPtr<UMaterialInterface> Material = nullptr;
  
-         // ============================================================
-         // Subdivision
-         // ============================================================
- 
-         UPROPERTY(EditAnywhere, BlueprintReadWrite, Category="Subdivision",
-                 meta=(PCG_Overridable))
-         bool bEnableSubdivision = false;
- 
-         UPROPERTY(EditAnywhere, BlueprintReadWrite, Category="Subdivision",
-                 meta=(PCG_Overridable, ClampMin="0"))
-         int32 SubdivisionLevels = 0;
- 
-         /** Strength of PN subdivision smoothing. Positive values apply PN subdivision
-          *  (standard smooth triangles) with the given strength; zero selects midpoint
-          *  (uniform) subdivision without smoothing; negative values trigger a
-          *  Catmull‑Clark–style refinement (uniform subdivision followed by a
-          *  smoothing pass). */
-         UPROPERTY(EditAnywhere, BlueprintReadWrite, Category="Subdivision",
-                 meta=(PCG_Overridable, ClampMin="-1.0", ClampMax="1.0"))
-         float PNStrength = 0.25f;
+        // ============================================================
+        // Subdivision
+        // ============================================================
 
-    /**
-     * If true, allow PN subdivision to refine triangles along the partition (crop) boundary.
-     * When enabled, crop-boundary vertices and edges are not added to the constraint set,
-     * so subdivision will interpolate across the partition seam. Use with overscan sampling
-     * to maintain continuity with neighboring partitions. If false, crop-boundary vertices
-     * are treated as hard constraints and will not be refined.
-     */
-    UPROPERTY(EditAnywhere, BlueprintReadWrite, Category="Subdivision",
-              meta=(PCG_Overridable))
-    bool bSubdividePartitionBoundary = false;
+        /**
+         * Subdivision has been removed from this node. Mesh refinement should be performed in a
+         * separate node designed specifically for subdivision. These properties were previously
+         * used to control PN, uniform, and Catmull–Clark subdivision, but they are now
+         * deprecated and have no effect.
+         */
+
  
          // ============================================================
          // Cleanup
