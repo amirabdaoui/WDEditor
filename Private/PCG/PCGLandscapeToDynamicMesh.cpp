@@ -63,9 +63,36 @@
  
  bool FPCGLandscapeToDynamicMeshElement::ExecuteInternal(FPCGContext* Context) const
  {
-         const auto* Settings =
-                 Context->GetInputSettings<UPCGLandscapeToDynamicMeshSettings>();
+        const auto* Settings =
+                Context->GetInputSettings<UPCGLandscapeToDynamicMeshSettings>();
          check(Settings);
+
+        // ----------------------------------------------------------------------
+        // Determine the generation grid size once up front.  The PCG component
+        // exposes the partition/grid size via GetGenerationGridSize().  We cache
+        // this value here so that it can be used later when applying a vertical
+        // offset to the generated mesh.  Retrieving it once avoids repeated
+        // property accesses during the build process.
+        // Determine the generation grid size once up front.  The execution state
+        // exposes the partition/grid size via GetGenerationGridSize().  We cache
+        // this value here so that it can be used later when applying a vertical
+        // offset to the generated mesh.  Retrieving it once avoids repeated
+        // property accesses during the build process.  We do not use
+        // Context->SourceComponent here because that API is deprecated.
+        uint32 CachedGridSize = 0;
+        if (Context && Context->ExecutionSource.IsValid())
+        {
+                // Retrieve the underlying execution source object.  ExecutionSource is a
+                // TWeakInterfacePtr<IPCGGraphExecutionSource>, so calling Get() returns
+                // the pointer to the interface.  The PCG component implements this
+                // interface, so we can cast the interface pointer to UPCGComponent.
+                IPCGGraphExecutionSource* ExecSourceObj = Context->ExecutionSource.Get();
+                const UPCGComponent* PCGComp = Cast<UPCGComponent>(ExecSourceObj);
+                if (PCGComp)
+                {
+                        CachedGridSize = PCGComp->GetGenerationGridSize();
+                }
+        }
  
          const auto LandscapeInputs =
                  Context->InputData.GetInputsByPin(
@@ -307,18 +334,38 @@
          UDynamicMesh* DynMesh = OutMeshData->GetMutableDynamicMesh();
          check(DynMesh);
  
-         DynMesh->EditMesh(
-                 [&](UE::Geometry::FDynamicMesh3& Mesh)
-                 {
-                         Mesh = MoveTemp(BuiltMesh);
-                         if (Settings->bCompactAtEnd)
-                         {
-                                 Mesh.CompactInPlace();
-                         }
-                 },
-                 EDynamicMeshChangeType::GeneralEdit,
-                 EDynamicMeshAttributeChangeFlags::Unknown,
-                 true);
+        DynMesh->EditMesh(
+                [&](UE::Geometry::FDynamicMesh3& Mesh)
+                {
+                        // Move the freshly built mesh into the dynamic mesh
+                        Mesh = MoveTemp(BuiltMesh);
+
+                        // Optional: compact the mesh to remove unused vertices/attributes
+                        if (Settings->bCompactAtEnd)
+                        {
+                                Mesh.CompactInPlace();
+                        }
+
+                        // Apply a vertical offset to the mesh to align it with the landscape.
+                        // We subtract half of the partition grid size along Z so that the
+                        // generated mesh sits correctly on top of the landscape tile.  The
+                        // offset is only applied if a valid grid size was retrieved.  Because
+                        // FDynamicMesh3 in UE5.6 does not provide a Translate() method, we
+                        // manually adjust each vertex position.
+                        if (CachedGridSize > 0)
+                        {
+                                const double OffsetZ = -0.5 * static_cast<double>(CachedGridSize);
+                                for (int32 Vid : Mesh.VertexIndicesItr())
+                                {
+                                        FVector3d Position = Mesh.GetVertex(Vid);
+                                        Position.Z += OffsetZ;
+                                        Mesh.SetVertex(Vid, Position);
+                                }
+                        }
+                },
+                EDynamicMeshChangeType::GeneralEdit,
+                EDynamicMeshAttributeChangeFlags::Unknown,
+                true);
  
          EmitOutput();
          return true;
